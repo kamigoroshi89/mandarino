@@ -385,6 +385,8 @@ def run_ui():
     CSS = b"""
     @define-color accent #7F77DD;
     window.drop, window.wheel { background: transparent; }
+    /* Yaru disegna un bordo verde su ogni widget che riceve un trascinamento: qui sarebbe un quadrato attorno al cerchio */
+    .drop-area:drop(active), .drop-area:drop(active):focus { border-color: transparent; box-shadow: none; caret-color: transparent; }
 
     .drop-disc { min-width: 64px; min-height: 64px; border-radius: 99px;
                  background: rgba(255,255,255,0.80); border: 1px solid alpha(@accent, 0.33);
@@ -748,6 +750,7 @@ def run_ui():
             self.connect("close-request", self.on_close_request)
 
             handle = Gtk.WindowHandle()
+            handle.add_css_class("drop-area")
             self.set_child(handle)
             self.handle = handle
             self.box = Gtk.Box()
