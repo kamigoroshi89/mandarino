@@ -4,9 +4,11 @@ Convertitore di file offline per Ubuntu (GNOME/Wayland), ispirato a Tangerine pe
 Python 3 + GTK4, un solo file: `mandarino.py`. Tutto gira in locale.
 
 ## Uso
-1. Avvia l'app: compare un quadratino arancione. Si sposta trascinandolo; × per chiudere.
-2. Trascina sopra uno o più file (o una cartella): si apre la ruota.
-3. Scegli una voce con il mouse, oppure con la tastiera.
+1. Avvia l'app: compare un cerchio traslucido. Si sposta trascinandolo; clic destro → Esci.
+2. Trascina uno o più file (o una cartella) sul cerchio: intorno si apre la ciambella. L'anello interno ha le schede
+   (Converti, Strumenti, Azioni): passaci sopra per cambiare le voci dell'anello esterno.
+3. Rilascia il file sullo spicchio della voce scelta. Se lo rilasci sul cerchio o sulle schede si apre la ruota classica
+   (mouse o tastiera).
 4. I risultati compaiono accanto all'originale, mai in sovrascrittura (`nome (1).ext`, …). A fine lavoro arriva una notifica.
 
 Rilanciare l'app quando è già aperta porta in primo piano la finestra esistente.
@@ -39,7 +41,7 @@ L'avvio automatico all'accesso non serve più: l'estensione lo avvia al bisogno.
 
 ## Dipendenze
 ```
-sudo apt install python3-gi gir1.2-gtk-4.0 python3-pil imagemagick libheif-examples \
+sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-4.0 python3-pil imagemagick libheif-examples \
   poppler-utils ghostscript qpdf pandoc libreoffice-writer libnotify-bin
 ```
 
