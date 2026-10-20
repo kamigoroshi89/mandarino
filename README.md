@@ -31,13 +31,15 @@ Per tenerla sempre visibile: clic destro sulla barra/finestra → "Sempre in pri
 - **Azioni** (anche per cartelle): copia percorso, mostra in File, terminale qui, cestino.
 
 ## Comparsa automatica al trascinamento (estensione GNOME Shell)
-`~/.local/share/gnome-shell/extensions/mandarino-drop@local` (copia in `estensione-gnome/`).
-Quando inizi a trascinare un file, mostra Mandarino (lo avvia se non è aperto) in basso al centro;
-a trascinamento finito lo nasconde, aspettando che la ruota si chiuda. Se Mandarino era già
-visibile, non lo tocca. Attivazione: esci e rientra dalla sessione, poi
-`gnome-extensions enable mandarino-drop@local`. Log: `journalctl -f -o cat /usr/bin/gnome-shell | grep mandarino-drop`.
+`estensione-gnome/` (da copiare in `~/.local/share/gnome-shell/extensions/mandarino-drop@local`).
+Quando inizi a trascinare un file l'estensione avvia Mandarino (se non è già aperto) e mette il cerchio in diagonale
+rispetto al puntatore, sempre in primo piano. A trascinamento finito lo chiude, ma solo quando non c'è più nulla da
+fare: aspetta che finisca la conversione ("Mandarino · lavoro" nel titolo) e che si chiuda la ruota.
+Attivazione: esci e rientra dalla sessione, poi `gnome-extensions enable mandarino-drop@local`.
+Dopo una modifica a `logic.js` basta `gnome-extensions disable` + `enable`.
+Log: `journalctl --user -f -o cat /usr/bin/gnome-shell | grep mandarino-drop`.
 Poiché parte con qualunque trascinamento (anche di testo), può comparire anche quando non serve.
-L'avvio automatico all'accesso non serve più: l'estensione lo avvia al bisogno.
+L'avvio automatico all'accesso non serve: l'estensione avvia l'app al bisogno.
 
 ## Dipendenze
 ```
@@ -46,8 +48,8 @@ sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-4.0 python3-pil imagemag
 ```
 
 ## Installazione
-Script in `~/.local/bin/mandarino.py`; lanciatore in `~/.local/share/applications/mandarino.desktop`
-e copia in `~/.config/autostart/` per l'avvio all'accesso.
+Script in `~/.local/bin/mandarino.py` (l'estensione lo avvia da lì); lanciatore in
+`~/.local/share/applications/mandarino.desktop`.
 
 ## Limiti noti
 - Wayland: l'app non sceglie la propria posizione né si mette in primo piano da sola, e non intercetta tasti globali. La ruota si apre dopo il rilascio.

@@ -1,0 +1,7 @@
+{
+  "uuid": "mandarino-drop@local",
+  "name": "Mandarino Drop",
+  "description": "Quando trascini un file mostra Mandarino accanto al puntatore, in primo piano; a lavoro finito lo chiude.",
+  "shell-version": ["48", "49", "50"],
+  "version": 1
+}
