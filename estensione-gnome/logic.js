@@ -1,9 +1,13 @@
+import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 const TITLE = 'Mandarino';        // titolo della finestra principale; "Mandarino · lavoro" durante una conversione
 const OFFSET = 110;               // distanza del cerchio dal puntatore, in pixel logici
 const IDLE_MS = 1500;             // quiete richiesta prima di chiudere
+const SHOW_MS = 10;               // il cerchio compare questo tempo dopo l'inizio del trascinamento
+const FADE_MS = 60;               // durata della dissolvenza d'ingresso
+const APP_ID = 'it.mandarino.App';
 const SCRIPT = GLib.build_filenamev([GLib.get_home_dir(), '.local', 'bin', 'mandarino.py']);
 
 export class Logic {
@@ -12,6 +16,8 @@ export class Logic {
         this._spawning = false;
         this._raiseTimer = 0;
         this._closeTimer = 0;
+        this._revealTimer = 0;
+        this._dragStart = 0;
         const h = Main.xdndHandler;
         if (!h) {
             console.error('[mandarino-drop] Main.xdndHandler non disponibile');
@@ -35,6 +41,7 @@ export class Logic {
         }
         this._stopRaise();
         this._cancelClose();
+        this._cancelReveal();
     }
 
     // ───────── Finestre ─────────
@@ -89,12 +96,12 @@ export class Logic {
     // aspetta che la finestra appena creata abbia attore e dimensioni, poi esegue cb
     _whenReady(w, cb) {
         let tries = 0;
-        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 30, () => {
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 10, () => {
             if (w.get_compositor_private() && w.get_frame_rect().width > 0) {
                 cb(w);
                 return GLib.SOURCE_REMOVE;
             }
-            return ++tries < 100 ? GLib.SOURCE_CONTINUE : GLib.SOURCE_REMOVE;
+            return ++tries < 300 ? GLib.SOURCE_CONTINUE : GLib.SOURCE_REMOVE;
         });
     }
 
@@ -111,8 +118,10 @@ export class Logic {
             const t = this._target(ready);
             console.log(`[mandarino-drop] finestra creata, la sposto in ${Math.round(t.x)},${Math.round(t.y)}`);
             this._place(ready, t);
-            if (this._dragging)
+            if (this._dragging) {
+                this._conceal(ready);
                 this._startRaise();
+            }
             for (const ms of [60, 200, 500]) {
                 GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
                     if (this._main() === ready)
@@ -123,10 +132,35 @@ export class Logic {
         });
     }
 
+    // Il cerchio nasce subito (l'app è residente) ma resta trasparente fino a SHOW_MS dall'inizio del trascinamento.
+    _conceal(w) {
+        const wait = SHOW_MS - (GLib.get_monotonic_time() - this._dragStart) / 1000;
+        const actor = w.get_compositor_private();
+        if (!actor || wait <= 0)
+            return;
+        actor.opacity = 0;
+        this._cancelReveal();
+        this._revealTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, Math.ceil(wait), () => {
+            this._revealTimer = 0;
+            const cur = this._main()?.get_compositor_private();
+            if (cur === actor && this._dragging)
+                actor.ease({opacity: 255, duration: FADE_MS});
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _cancelReveal() {
+        if (this._revealTimer) {
+            GLib.source_remove(this._revealTimer);
+            this._revealTimer = 0;
+        }
+    }
+
     // ───────── Trascinamento ─────────
 
     _begin() {
         this._dragging = true;
+        this._dragStart = GLib.get_monotonic_time();
         this._cancelClose();
         const w = this._main();
         console.log(`[mandarino-drop] drag-begin, finestra ${w ? 'trovata' : 'assente (la avvio)'}`);
@@ -139,12 +173,30 @@ export class Logic {
                 this._spawning = false;
                 return GLib.SOURCE_REMOVE;
             });
-            try {
-                GLib.spawn_async(null, ['python3', SCRIPT], null, GLib.SpawnFlags.SEARCH_PATH, null);
-            } catch (e) {
-                console.error(`[mandarino-drop] avvio fallito: ${e.message}`);
-                this._spawning = false;
-            }
+            this._launch();
+        }
+    }
+
+    // L'app resta in vita con la finestra nascosta: basta riattivarla via D-Bus (pochi ms).
+    // Se non è in esecuzione (prima volta, o chiusa con "Esci") la si avvia.
+    _launch() {
+        Gio.DBus.session.call(APP_ID, `/${APP_ID.replaceAll('.', '/')}`, 'org.freedesktop.Application', 'Activate',
+            new GLib.Variant('(a{sv})', [{}]), null, Gio.DBusCallFlags.NONE, -1, null, (conn, res) => {
+                try {
+                    conn.call_finish(res);
+                } catch (e) {
+                    console.log(`[mandarino-drop] app non in esecuzione (${e.message}), la avvio`);
+                    this._spawn();
+                }
+            });
+    }
+
+    _spawn() {
+        try {
+            GLib.spawn_async(null, ['python3', SCRIPT], null, GLib.SpawnFlags.SEARCH_PATH, null);
+        } catch (e) {
+            console.error(`[mandarino-drop] avvio fallito: ${e.message}`);
+            this._spawning = false;
         }
     }
 

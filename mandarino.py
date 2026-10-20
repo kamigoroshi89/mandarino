@@ -83,13 +83,33 @@ def unique_path(path):
 
 
 def deliver(tmp_files, dest_dir):
-    """Sposta i risultati accanto all'originale senza sovrascrivere."""
+    """Sposta i risultati accanto all'originale senza sovrascrivere.
+
+    Il file viene prima copiato con nome nascosto nella cartella di destinazione e poi pubblicato con un
+    solo passo atomico: Files (inotify) vede comparire un file già completo e aggiorna subito la vista."""
     out = []
     for f in tmp_files:
         if not os.path.isfile(f) or os.path.getsize(f) == 0:
             raise ConvError(f"Risultato vuoto o mancante: {os.path.basename(f)}")
-        dst = unique_path(os.path.join(dest_dir, os.path.basename(f)))
-        shutil.move(f, dst)
+        name = os.path.basename(f)
+        part = os.path.join(dest_dir, f".{name}.mandarino-part")
+        shutil.move(f, part)
+        try:
+            while True:
+                dst = unique_path(os.path.join(dest_dir, name))
+                try:
+                    os.link(part, dst)     # fallisce se il nome è appena stato preso: non sovrascrive mai
+                    break
+                except FileExistsError:
+                    continue
+                except OSError:            # filesystem senza hard link
+                    if os.path.lexists(dst):
+                        continue
+                    os.rename(part, dst)
+                    break
+        finally:
+            if os.path.lexists(part):
+                os.unlink(part)
         out.append(dst)
     return out
 
@@ -438,10 +458,12 @@ def run_ui():
         tab = "act" if cat == "dir" else next((t for t in ("conv", "tool", "act") if tabs[t]), "act")
         return cat, tabs, tab
 
-    SIZE = 320                 # lato della finestra: la ciambella ci sta dentro, centrata sul cerchio
+    SIZE = 360                 # lato della finestra: la ciambella (con gli spicchi ingranditi) ci sta dentro, centrata sul cerchio
     R_CORE = 46                # dentro: cerchio centrale
     R_TAB = (46, 90)           # anello interno: schede
     R_ITEM = (96, 152)         # anello esterno: voci della scheda attiva
+    GROW = {"tab": (0, 6), "item": (5, 14)}   # quanto cresce lo spicchio sotto il file: (verso dentro, verso fuori) in px
+    GROW_MS = 90               # costante di tempo dell'ingrandimento
     ACCENT = (0x7F / 255, 0x77 / 255, 0xDD / 255)
 
     class Donut(Gtk.DrawingArea):
@@ -455,10 +477,13 @@ def run_ui():
             self.set_draw_func(self.draw)
             self.files, self.cat, self.tabs, self.tab = [], None, {}, "act"
             self.hover = None
+            self.grow = {}         # chiave spicchio -> ingrandimento 0..1 (animato)
+            self._tick = 0
 
         def set_files(self, files):
             self.files = list(files)
             self.hover = None
+            self.grow = {}
             if self.files:
                 self.cat, self.tabs, self.tab = build_tabs(self.files)
             self.queue_draw()
@@ -500,7 +525,38 @@ def run_ui():
             h = h if h and h[0] != "core" else None
             if h != self.hover:
                 self.hover = h
+                self.animate()
+
+        def animate(self):
+            """Porta l'ingrandimento di ogni spicchio verso il suo obiettivo (1 sotto il file, 0 altrove)."""
+            if self._tick:
+                return
+            last = [None]
+
+            def step(_w, clock):
+                now = clock.get_frame_time()
+                dt = 16000 if last[0] is None else now - last[0]
+                last[0] = now
+                k = 1 - math.exp(-dt / 1000 / GROW_MS)
+                busy = False
+                for key in set(self.grow) | ({self.hover} if self.hover else set()):
+                    goal = 1.0 if key == self.hover else 0.0
+                    v = self.grow.get(key, 0.0)
+                    v += (goal - v) * k
+                    if abs(goal - v) < 0.01:
+                        v = goal
+                    else:
+                        busy = True
+                    if v or key == self.hover:
+                        self.grow[key] = v
+                    else:
+                        self.grow.pop(key, None)
                 self.queue_draw()
+                if busy:
+                    return GLib.SOURCE_CONTINUE
+                self._tick = 0
+                return GLib.SOURCE_REMOVE
+            self._tick = self.add_tick_callback(step)
 
         def draw(self, _area, cr, w, h):
             if not self.files:
@@ -511,8 +567,11 @@ def run_ui():
             edge = (1, 1, 1, 0.25) if dark else (*ACCENT, 0.33)
             cx, cy = w / 2, h / 2
 
-            def piece(r0, r1, a0, a1, state, label, font, width):
-                gap = 3
+            def piece(r0, r1, a0, a1, state, label, font, width, key):
+                g = self.grow.get(key, 0.0)
+                ri, ro = GROW[key[0]]
+                r0, r1 = r0 - ri * g, r1 + ro * g
+                gap = 3 - 1.5 * g
                 cr.new_path()
                 cr.arc(cx, cy, r1, a0 + gap / r1, a1 - gap / r1)
                 cr.arc_negative(cx, cy, r0, a1 - gap / r0, a0 + gap / r0)
@@ -541,16 +600,21 @@ def run_ui():
 
             keys = self.tab_keys()
             names = dict(TABS)
+            jobs = []
             for i, k in enumerate(keys):
                 a0, a1 = self.span(i, len(keys))
                 state = "hover" if self.hover == ("tab", k) else "active" if k == self.tab else "idle"
-                piece(*R_TAB, a0, a1, state, names[k], "Sans 9", 76)
+                jobs.append((("tab", k), (*R_TAB, a0, a1, state, names[k], "Sans 9", 76)))
             items = self.tabs[self.tab]
             n = len(items)
             width = min(110, 2 * 124 * math.sin(math.pi / n) - 10) if n > 1 else 110
             for i, (label, _key) in enumerate(items):
                 a0, a1 = self.span(i, n)
-                piece(*R_ITEM, a0, a1, "hover" if self.hover == ("item", i) else "idle", label, "Sans 10", width)
+                state = "hover" if self.hover == ("item", i) else "idle"
+                jobs.append((("item", i), (*R_ITEM, a0, a1, state, label, "Sans 10", width)))
+            # chi sta crescendo o è sotto il file si disegna per ultimo, sopra i vicini
+            for key, args in sorted(jobs, key=lambda j: self.grow.get(j[0], 0.0)):
+                piece(*args, key)
 
     class Wheel(Gtk.Window):
         def __init__(self, app, files, on_run):
@@ -680,6 +744,8 @@ def run_ui():
             follow_theme(self)
             self.busy = False
             self._pulse_id = 0
+            # chiudere = nascondere: il processo resta in vita e il cerchio riappare in pochi ms
+            self.connect("close-request", self.on_close_request)
 
             handle = Gtk.WindowHandle()
             self.set_child(handle)
@@ -727,6 +793,10 @@ def run_ui():
             self.dt = dt
             self.handle.add_controller(dt)
             self.connect("map", lambda _w: self.catch_all(False))
+
+        def on_close_request(self, _w):
+            self.set_visible(False)
+            return True
 
         def catch_all(self, everything):
             """A riposo la finestra (grande per ospitare la ciambella) intercetta solo il cerchio:
@@ -867,16 +937,17 @@ def run_ui():
 
         def do_startup(self):
             Gtk.Application.do_startup(self)
+            self.hold()   # resta in vita anche con la finestra nascosta
+            self.win = None
             prov = Gtk.CssProvider()
             prov.load_from_data(CSS)
             Gtk.StyleContext.add_provider_for_display(
                 Gdk.Display.get_default(), prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
         def do_activate(self):
-            win = self.props.active_window
-            if not win:
-                win = DropWin(self)
-            win.present()
+            if not self.win:
+                self.win = DropWin(self)
+            self.win.present()
 
     return App().run([sys.argv[0]])
 
